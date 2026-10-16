@@ -4,7 +4,10 @@ import type {
   ChildToParentMessage,
   ParentToChildMessage,
 } from "../src/parcel-subprocess/messages.js";
-import { createParcelChildHandler } from "../src/parcel-subprocess/parcel-child-handler.js";
+import {
+  createParcelChildHandler,
+  disposeThenExit,
+} from "../src/parcel-subprocess/parcel-child-handler.js";
 import {
   createParcelWatcherProxy,
   type ChildChannel,
@@ -755,5 +758,37 @@ describe("createParcelWatcherProxy", () => {
         .filter((d) => d === "/root"),
     ).toEqual(["/root"]);
     proxy.dispose();
+  });
+});
+
+describe("disposeThenExit", () => {
+  it("exits by the deadline when a native unsubscribe never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const parcel = new FakeParcel();
+      parcel.unsubscribeGate = new Promise<void>(() => {});
+      const handler = createParcelChildHandler({
+        parcel,
+        send: () => {},
+        listEntries: async () => [],
+      });
+      handler.handleMessage({ kind: "subscribe", id: "sub_1", dir: "/root" });
+      await flush();
+      expect(parcel.activeDirs()).toEqual(["/root"]);
+      const exit = vi.fn();
+
+      disposeThenExit({
+        deadlineMs: 2_000,
+        dispose: () => handler.dispose(),
+        exit,
+      });
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(exit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(exit).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

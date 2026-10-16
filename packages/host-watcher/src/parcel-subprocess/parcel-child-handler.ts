@@ -145,3 +145,12 @@ export function createParcelChildHandler(args: {
     },
   };
 }
+
+export function disposeThenExit(args: {
+  deadlineMs: number;
+  dispose: () => Promise<void>;
+  exit: () => void;
+}): void {
+  setTimeout(args.exit, args.deadlineMs);
+  void args.dispose().finally(args.exit);
+}
