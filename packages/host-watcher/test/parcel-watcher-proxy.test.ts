@@ -629,6 +629,47 @@ describe("createParcelWatcherProxy", () => {
     }
   });
 
+  it("reports an oversized event batch as dropped events without resubscribing", async () => {
+    vi.spyOn(pathExistsModule, "pathExists").mockResolvedValue(true);
+    const { proxy, children, current } = createHarness();
+    setParcelWatcherBackend(proxy);
+    const deliveredBatchSizes: number[] = [];
+    let droppedEventReports = 0;
+    const subscription = new RootSubscription({
+      rootPath: "/root",
+      retryDelayMs: 250,
+      maxRetryDelayMs: 30_000,
+      onEvents: (events) => deliveredBatchSizes.push(events.length),
+      onDroppedEvents: () => {
+        droppedEventReports += 1;
+      },
+      onWatchError: () => {},
+    });
+    const batch = (size: number): ParcelWatcherEventBatch =>
+      Array.from({ length: size }, (_unused, index) => ({
+        path: `/root/build/${index}.js`,
+        type: "update" as const,
+      }));
+    try {
+      subscription.start();
+      await flush(20);
+
+      current().parcel.emit("/root", batch(10_000));
+      current().parcel.emit("/root", batch(10_001));
+      await flush(20);
+
+      expect(deliveredBatchSizes).toEqual([10_000]);
+      expect(droppedEventReports).toBe(1);
+      expect(children).toHaveLength(1);
+      expect(current().parcel.subscribeAttempts).toEqual(["/root"]);
+      expect(current().parcel.activeDirs()).toEqual(["/root"]);
+    } finally {
+      await subscription.dispose();
+      disposeParcelWatcherBackend();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("resolves unsubscribe only after the child released the native subscription", async () => {
     const { proxy, current } = createHarness();
     const subscription = await proxy.subscribe("/root", () => {});
